@@ -1,6 +1,6 @@
 # Cockroach_Poker_CFR
 
-The counterfactual regret algorithm (CFR) has recently been developed and successfully optimized to solve the imperfect information game of 2-player poker, and outcompetes top professionals in multiplayer tournaments. However, no one has yet used this algorithm to solve the silly game of Cockroach poker, a bluffing game similar to Bullshit but with stinkbugs and cockroaches. This project will attempt to do just that. I'm opening this project up to use the CFR algorithm and game theory to solve a two-player version of the game cockroach poker, basically using a bazooka to kill a fly.
+The counterfactual regret algorithm (CFR) has recently been developed and successfully optimized to solve the imperfect information game of heads-up poker and outcompetes top professionals in multiplayer no-limit poker tournaments. However, no one has yet used this algorithm to solve the silly game of Cockroach poker, a bluffing game similar to Bullshit but with stinkbugs and cockroaches. This project will attempt to do just that. I'm opening this project up to use the CFR algorithm and game theory to solve a two-player version of the game cockroach poker, basically using a bazooka to kill a fly.
 
 # CFR algorithm, how it works
 
