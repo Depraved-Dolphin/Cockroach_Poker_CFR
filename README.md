@@ -14,4 +14,4 @@ The offical rules to Cockroach Poker contain a lot of typos but they say the sam
 
 # I need your help
 
-I have little coding experience, so I need your help to finish this up. Your suggestions and adjustments are very welcome! If you have any math expertise, I would also like to run the numbers for an upper bound on the total number of informatio sets in this game. This would give me a good estimate of the compute time and memory space I need
+I have little coding experience, so I need your help to finish this up. My Python code is deposited in the next file in this repository. Your suggestions and adjustments are very welcome! If you have any math expertise, I would also like to run the numbers for an upper bound on the total number of informatio sets in this game. This would give me a good estimate of the compute time and memory space I need
