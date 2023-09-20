@@ -1,0 +1,238 @@
+import numpy as np
+import random
+from collections import defaultdict
+
+class Node:
+	def __init__(self, valid_actions):
+		self.num_actions = len(valid_actions)
+		self.regret_sum = defaultdict(int)
+		self.strategy = defaultdict(int)
+		self.strategy_sum = defaultdict(int)
+		self.valid_actions = valid_actions
+
+	def get_strategy(self):
+		normalizing_sum = 0
+		for a in self.valid_actions:
+			if self.regret_sum[a] > 0:
+				self.strategy[a] = self.regret_sum[a]
+			else:
+				self.strategy[a] = 0
+			normalizing_sum += self.strategy[a]
+
+		for a in self.valid_actions:
+			if normalizing_sum > 0:
+				self.strategy[a] /= normalizing_sum
+			else:
+				self.strategy[a] = 1.0/self.num_actions
+
+		return self.strategy
+
+	def get_average_strategy(self):
+		avg_strategy = defaultdict(int)
+		normalizing_sum = 0
+		
+		for a in self.valid_actions:
+			normalizing_sum += self.strategy_sum[a]
+		for a in self.valid_actions:
+			if normalizing_sum > 0:
+				avg_strategy[a] = self.strategy_sum[a] / normalizing_sum
+			else:
+				avg_strategy[a] = 1.0 / self.num_actions
+		
+		return avg_strategy
+
+class CockroachPokerCFR:
+    def __init__(self, iterations, card_types, num_copy):
+        self.card_types = list(range(card_types))
+        self.deck = [element for element in self.card_types for _ in range(num_copy)]
+        self.iterations = iterations
+        self.nodes = {}
+        self.decision_actions = [0, 1]  # 0 for disbelieve, 1 for believe
+
+    def hand_to_counts(self, hand_or_tableau):
+        counts = [0] * len(self.card_types)
+        for card in hand_or_tableau:
+            counts[card] += 1
+        return counts
+
+    def draw_and_sort(self):
+        random.shuffle(self.deck)
+
+        # Remove the first 10 cards
+        remaining_deck = self.deck[10:]
+
+        # Distribute the rest between P1 and P2
+        half_deck_size = len(remaining_deck) // 2
+        P1_hand = self.hand_to_counts(remaining_deck[:half_deck_size])
+        P2_hand = self.hand_to_counts(remaining_deck[half_deck_size:])
+
+        # To remove symmetries in the cards..
+        # Sort P1_hand based on the ascending count of P1 and use rearranged P1 indices to sort P2_hand. 
+        # In case of tie counts in P1, sort P2 hand by descending count.
+        P1_sorted_indices = sorted(range(len(P1_hand)), key=lambda k: (P1_hand[k], -P2_hand[k]))
+        P1_hand = [P1_hand[i] for i in P1_sorted_indices]
+        P2_hand = [P2_hand[i] for i in P1_sorted_indices]
+
+        return P1_hand, P2_hand
+
+    def losing_conditions(self, acting_player, P1_hand, P1_tableau, P2_hand, P2_tableau, traversing_player):
+        if any(count >= 5 for count in P1_tableau) or all(count == 0 for count in P1_hand):
+            return 1 if acting_player == traversing_player else -1
+        if any(count >= 5 for count in P2_tableau) or all(count == 0 for count in P2_hand):
+            return -1 if acting_player == traversing_player else 1
+        return None 
+
+    
+    def choose_and_claim(self, infoset, acting_player, acting_player_hand, acting_player_tableau, opponent_player_hand, opponent_player_tableau, history, nodes_touched, traversing_player, t):
+        
+        valid_actions = [(card_idx, claim) for card_idx, card_count in enumerate(acting_player_hand) if card_count > 0 for claim in range(len(self.card_types))]
+
+        if infoset not in self.nodes:
+            self.nodes[infoset] = Node(valid_actions)
+
+        nodes_touched += 1
+
+        if acting_player == traversing_player:
+            util = defaultdict(int)
+            node_util = 0
+            strategy = self.nodes[infoset].get_strategy()
+            
+            for (chosen_card_type, claimed_type) in valid_actions:
+                next_history = history + [(chosen_card_type, claimed_type)]
+                acting_player_hand[chosen_card_type] -= 1
+
+                util[(chosen_card_type, claimed_type)] = self.external_cfr(1 - acting_player, acting_player_hand, acting_player_tableau, opponent_player_hand, opponent_player_tableau, next_history, nodes_touched, traversing_player, t)
+                node_util += util[(chosen_card_type, claimed_type)] * strategy[(chosen_card_type, claimed_type)]
+                
+            for (chosen_card_type, claimed_type) in valid_actions:
+                regret = util[(chosen_card_type, claimed_type)] - node_util
+                self.nodes[infoset].regret_sum[(chosen_card_type, claimed_type)] += regret
+
+            return node_util
+
+        else: # Non-traversing player
+            strategy = self.nodes[infoset].get_strategy()
+            chosen_card_type, claimed_type = random.choices(valid_actions, weights=[strategy[action] for action in valid_actions])[0]
+            
+            next_history = history + [(chosen_card_type, claimed_type)]
+            acting_player_hand[chosen_card_type] -= 1
+
+            for a in valid_actions:
+                self.nodes[infoset].strategy_sum[a] += strategy[a]
+        
+            util = self.external_cfr(1 - acting_player, acting_player_hand, acting_player_tableau, opponent_player_hand, opponent_player_tableau, next_history, nodes_touched, traversing_player, t)
+            return util
+
+    def decision_phase(self, infoset, acting_player, acting_player_hand, acting_player_tableau, opponent_player_hand, opponent_player_tableau, history, nodes_touched, traversing_player, t):
+
+        if infoset not in self.nodes:
+            self.nodes[infoset] = Node(self.decision_actions)
+
+        nodes_touched += 1
+        
+        if acting_player == traversing_player:
+            util = defaultdict(int)
+            node_util = 0
+            strategy = self.nodes[infoset].get_strategy()
+
+            for a in self.decision_actions:
+                next_history = history + [a]
+                card_passed, claimed_type = next_history[-2]
+
+                if a == 0:  # Disbelieve
+                    if card_passed == claimed_type:  # Wrong disbelief
+                        opponent_player_tableau[card_passed] += 1
+                        next_player = 1 - acting_player
+                    else:  # Correct disbelief
+                        acting_player_tableau[card_passed] += 1
+                        next_player = acting_player
+                else:  # Believe
+                    if card_passed == claimed_type:  # Correct belief
+                        opponent_player_tableau[card_passed] += 1
+                        next_player = 1 - acting_player
+                    else:  # Wrong belief
+                        acting_player_tableau[card_passed] += 1
+                        next_player = acting_player
+
+                util[a] = self.external_cfr(next_player, acting_player_hand, acting_player_tableau, opponent_player_hand, opponent_player_tableau, next_history, nodes_touched, traversing_player, t)
+                node_util += util[a] * strategy[a]
+            
+            for a in self.decision_actions:
+                regret = util[a] - node_util
+                self.nodes[infoset].regret_sum[a] += regret
+
+            return node_util
+
+        else: # Non-traversing player
+            strategy = self.nodes[infoset].get_strategy()
+            action = random.choices(self.decision_actions, weights=[strategy[action] for action in self.decision_actions])[0]
+            next_history = history + [action]
+            card_passed, claimed_type = next_history[-2]
+
+            if action == 0:  # Disbelieve
+                if card_passed == claimed_type:  # Wrong disbelief
+                    opponent_player_tableau[card_passed] += 1
+                    next_player = 1 - acting_player
+                else:  # Correct disbelief
+                    acting_player_tableau[card_passed] += 1
+                    next_player = acting_player
+            else:  # Believe
+                if card_passed == claimed_type:  # Correct belief
+                    opponent_player_tableau[card_passed] += 1
+                    next_player = 1 - acting_player
+                else:  # Wrong belief
+                    acting_player_tableau[card_passed] += 1
+                    next_player = acting_player
+            
+            for a in self.decision_actions:
+                self.nodes[infoset].strategy_sum[a] += strategy[a]
+            util = self.external_cfr(next_player, acting_player_hand, acting_player_tableau, opponent_player_hand, opponent_player_tableau, next_history, nodes_touched, traversing_player, t)
+            return util
+
+    
+    def cfr_iterations_external(self): #Correct
+        util = np.zeros(2)
+        for t in range(1, self.iterations + 1):
+            for traversing_player in range(2):  # Loop for each player
+                P1 = 0
+                P1_hand, P2_hand = self.draw_and_sort()
+                util[traversing_player] += self.external_cfr(P1, P1_hand, [0]*len(self.card_types), P2_hand, [0]*len(self.card_types), [], 0, traversing_player, t)
+        
+        print('Average game value: {}'.format(util[0]/(self.iterations)))
+        
+        with open('cockroachnlstrat.txt', 'w+') as f:
+            for i in sorted(self.nodes):
+                f.write('{}, {}\n'.format(i, self.nodes[i].get_average_strategy()))
+                print(i, self.nodes[i].get_average_strategy())
+
+    def external_cfr(self, acting_player, P1_hand, P1_tableau, P2_hand, P2_tableau, history, nodes_touched, traversing_player, t):
+
+        if t % 1000 == 0 and t>0:
+            print('THIS IS ITERATION', t)
+
+        # Check for endgame conditions.
+        loss = self.losing_conditions (acting_player, P1_hand, P1_tableau, P2_hand, P2_tableau, traversing_player)
+        if loss is not None:
+            return loss
+
+        # Phase determination based on history length
+        phase = "choose_and_claim" if len(history) % 2 == 0 else "decision"
+
+        if acting_player == 0:
+            acting_player_hand, acting_player_tableau = P1_hand, P1_tableau
+            opponent_player_hand, opponent_player_tableau = P2_hand, P2_tableau
+        else:
+            acting_player_hand, acting_player_tableau = P2_hand, P2_tableau
+            opponent_player_hand, opponent_player_tableau = P1_hand, P1_tableau
+
+        # Act based on the phase
+        if phase == "choose_and_claim":
+            util = self.choose_and_claim(str(acting_player_hand) + str(acting_player_tableau) + str(opponent_player_tableau) + str(history[-1] if history else ''), acting_player, acting_player_hand, acting_player_tableau, opponent_player_hand, opponent_player_tableau, history, nodes_touched, traversing_player, t)
+        else:  # Decision phase
+            util = self.decision_phase(str(acting_player_hand) + str(acting_player_tableau) + str(opponent_player_tableau) + str(history[-1] if history else ''), acting_player, acting_player_hand, acting_player_tableau, opponent_player_hand, opponent_player_tableau, history, nodes_touched, traversing_player, t)
+
+        return util
+
+
+cp = CockroachPokerCFR(1, 8, 8) #trial size iterations
+cp.cfr_iterations_external()  # Execute the iterations.
